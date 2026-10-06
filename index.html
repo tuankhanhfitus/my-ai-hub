@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Hub - Quản Lý Công Cụ AI (Realtime Cloud)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Thư viện kéo thả mượt mà SortableJS -->
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+  <style>
+    body { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+    .modal-backdrop { 
+      background-color: rgba(15, 23, 42, 0.85); 
+      backdrop-filter: blur(6px); 
+    }
+    
+    /* Hiệu ứng CSS khi kéo thả thẻ AI */
+    .sortable-ghost { 
+      opacity: 0.3; 
+      background: #1e293b !important;
+      border: 2px dashed #3b82f6 !important;
+      transform: scale(0.98); 
+    }
+    .sortable-drag { 
+      cursor: grabbing !important; 
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.75) !important;
+      transform: rotate(1deg) scale(1.02);
+    }
+
+    /* Hiệu ứng CSS cho Modal & Toast */
+    @keyframes popIn {
+      0% { opacity: 0; transform: scale(0.92) translateY(10px); }
+      100% { opacity: 1; transform: scale(1) translateY(0); }
+    }
+    .animate-modal {
+      animation: popIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    @keyframes slideUpToast {
+      0% { opacity: 0; transform: translateY(20px) scale(0.95); }
+      100% { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    .toast-enter {
+      animation: slideUpToast 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+  </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col">
+
+  <!-- Nội dung chính -->
+  <div class="max-w-6xl w-full mx-auto px-4 py-8 flex-1">
+    
+    <!-- Header & Thanh điều khiển -->
+    <header class="flex flex-col md:flex-row justify-between items-center gap-4 mb-8 pb-6 border-b border-slate-800">
+      <div>
+        <h1 class="text-3xl md:text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-emerald-400">
+          AI Hub Manager
+        </h1>
+        <p class="text-slate-400 text-sm mt-1">Nhấn giữ và kéo thả thẻ tới bất kỳ vị trí nào • Đồng bộ Firebase Cloud</p>
+      </div>
+
+      <div class="flex flex-wrap gap-2.5 items-center">
+        <!-- Nút Cài đặt API Key -->
+        <button onclick="openApiKeyModal()" 
+                class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-amber-300 font-medium px-3.5 py-2 rounded-lg text-sm transition flex items-center gap-1.5"
+                title="Cài đặt khóa Gemini 3.8 Flash API">
+          <span>🔑</span> Cài đặt API
+        </button>
+
+        <!-- Nút Nhập file JSON thẳng vào Firestore -->
+        <label class="bg-slate-800 hover:bg-indigo-950/80 border border-slate-700 hover:border-indigo-500/50 text-indigo-300 font-medium px-3.5 py-2 rounded-lg text-sm transition cursor-pointer flex items-center gap-1.5 shadow-sm"
+               title="Chọn file JSON để tải và lưu thẳng lên Firebase">
+          <span>📂</span> Nhập JSON
+          <input type="file" id="importJsonInput" accept=".json" class="hidden" onchange="importJSONToFirestore(event)">
+        </label>
+
+        <!-- Nút Xuất file JSON từ Firestore -->
+        <button onclick="exportJSONFromFirestore()" 
+                class="bg-slate-800 hover:bg-emerald-950/80 border border-slate-700 hover:border-emerald-500/50 text-emerald-300 font-medium px-3.5 py-2 rounded-lg text-sm transition flex items-center gap-1.5 shadow-sm"
+                title="Sao lưu toàn bộ danh sách từ Firebase về file JSON">
+          <span>⬇</span> Xuất JSON
+        </button>
+
+        <!-- Nút Thêm AI mới -->
+        <button onclick="openModal()" 
+                class="bg-blue-600 hover:bg-blue-500 text-white font-semibold px-4 py-2 rounded-lg text-sm transition flex items-center gap-1.5 shadow-lg shadow-blue-600/20">
+          <span>＋</span> Thêm AI mới
+        </button>
+      </div>
+    </header>
+
+    <!-- Thanh tìm kiếm -->
+    <div class="mb-6">
+      <div class="relative w-full">
+        <input type="text" id="searchInput" placeholder="Tìm kiếm nhanh công cụ AI theo tên, danh mục hoặc tính năng..." 
+               class="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-800/90 border border-slate-700 text-slate-100 placeholder-slate-400 focus:outline-none focus:border-blue-500 transition">
+        <span class="absolute left-3.5 top-3 text-slate-400">🔍</span>
+      </div>
+    </div>
+
+    <!-- Thống kê số lượng & Trạng thái -->
+    <div class="mb-4 text-xs text-slate-400 flex justify-between items-center">
+      <span id="toolCount">Đang kết nối Firestore...</span>
+      <span id="cloudStatus" class="text-emerald-400 flex items-center gap-1">● Đồng bộ đám mây</span>
+    </div>
+
+    <!-- Lưới hiển thị danh sách thẻ AI (Hỗ trợ kéo thả trực tiếp trên thẻ) -->
+    <div id="aiGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5"></div>
+  </div>
+
+  <!-- MODAL CÀI ĐẶT API KEY -->
+  <div id="apiKeyModal" class="fixed inset-0 modal-backdrop hidden items-center justify-center z-50 p-4">
+    <div class="bg-slate-800 border border-slate-700 rounded-2xl max-w-md w-full p-6 shadow-2xl animate-modal">
+      <h2 class="text-xl font-bold text-white mb-2">Cài đặt Gemini 3.8 API Key</h2>
+      <p class="text-slate-400 text-xs mb-4 leading-relaxed">
+        API key sẽ được lưu an toàn tại LocalStorage của trình duyệt và chỉ dùng để gọi trực tiếp tới mô hình <b>gemini-3.8-flash</b>.
+      </p>
+
+      <div class="space-y-4">
+        <div>
+          <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Google Gemini API Key</label>
+          <input type="password" id="geminiApiKeyInput" placeholder="AIzaSy..."
+                 class="w-full px-3.5 py-2 rounded-lg bg-slate-900 border border-slate-700 text-white focus:outline-none focus:border-blue-500">
+        </div>
+
+        <div class="flex justify-end gap-3 pt-3 border-t border-slate-700">
+          <button type="button" onclick="closeApiKeyModal()" class="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm">Hủy</button>
+          <button type="button" onclick="saveApiKey()" class="px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold">Lưu Key</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL THÊM / SỬA CÔNG CỤ AI -->
+  <div id="aiModal" class="fixed inset-0 modal-backdrop hidden items-center justify-center z-50 p-4">
+    <div class="bg-slate-800 border border-slate-700 rounded-2xl max-w-md w-full p-6 shadow-2xl animate-modal">
+      <div class="flex justify-between items-center mb-5">
+        <h2 id="modalTitle" class="text-xl font-bold text-white">Thêm công cụ AI mới</h2>
+        <button onclick="closeModal()" class="text-slate-400 hover:text-white text-xl">&times;</button>
+      </div>
+
+      <form id="aiForm" onsubmit="saveAITool(event)" class="space-y-4">
+        <input type="hidden" id="toolId">
+
+        <div>
+          <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Tên công cụ AI *</label>
+          <input type="text" id="toolName" required placeholder="VD: NotebookLM, Cursor, ChatGPT..."
+                 class="w-full px-3.5 py-2 rounded-lg bg-slate-900 border border-slate-700 text-white focus:outline-none focus:border-blue-500">
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Đường dẫn (URL) *</label>
+          <input type="url" id="toolUrl" required placeholder="https://..."
+                 class="w-full px-3.5 py-2 rounded-lg bg-slate-900 border border-slate-700 text-white focus:outline-none focus:border-blue-500">
+        </div>
+
+        <!-- Nút kích hoạt Gemini 3.8 Flash -->
+        <div>
+          <button type="button" id="autoGenerateBtn" onclick="autoGenerateInfo()" 
+                  class="w-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-bold py-2.5 px-4 rounded-lg transition flex items-center justify-center gap-2 shadow-md">
+            <span>✨</span> Tự động viết mô tả bằng Gemini 3.8 Flash
+          </button>
+          <span id="aiGeneratingText" class="hidden text-xs text-indigo-400 text-center block mt-1.5 animate-pulse">Gemini 3.8 Flash đang xử lý...</span>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Danh mục *</label>
+          <select id="toolCategory" required
+                  class="w-full px-3.5 py-2 rounded-lg bg-slate-900 border border-slate-700 text-white focus:outline-none focus:border-blue-500">
+            <option value="LLM / Chat">LLM / Chat</option>
+            <option value="Coding">Coding</option>
+            <option value="Image / Design">Image / Design</option>
+            <option value="Audio / Video">Audio / Video</option>
+            <option value="Research / Search">Research / Search</option>
+            <option value="Productivity">Productivity</option>
+            <option value="Other">Khác (Other)</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Mô tả công dụng *</label>
+          <textarea id="toolDesc" rows="3" required placeholder="Nhập mô tả hoặc bấm nút trên để Gemini 3.8 tự sinh..."
+                    class="w-full px-3.5 py-2 rounded-lg bg-slate-900 border border-slate-700 text-white focus:outline-none focus:border-blue-500"></textarea>
+        </div>
+
+        <div class="flex justify-end gap-3 pt-3 border-t border-slate-700">
+          <button type="button" onclick="closeModal()" 
+                  class="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm font-medium transition">
+            Hủy
+          </button>
+          <button type="submit" id="saveSubmitBtn"
+                  class="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition">
+            Lưu trực tiếp lên Cloud
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL XÁC NHẬN ĐẸP MẮT (CHO NHẬP JSON / XUẤT JSON / XÓA) -->
+  <div id="confirmDialogModal" class="fixed inset-0 modal-backdrop hidden items-center justify-center z-50 p-4">
+    <div class="bg-slate-800 border border-slate-700 rounded-2xl max-w-md w-full p-6 shadow-2xl animate-modal">
+      <div class="flex items-start gap-4">
+        <div id="confirmIconBox" class="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl shrink-0 bg-blue-500/15 text-blue-400 border border-blue-500/30">
+          📂
+        </div>
+        <div class="flex-1">
+          <h3 id="confirmTitle" class="text-lg font-bold text-white mb-1">Xác nhận thao tác</h3>
+          <p id="confirmMessage" class="text-slate-300 text-sm leading-relaxed"></p>
+        </div>
+      </div>
+
+      <!-- Khung xem trước thông tin file JSON (ẩn/hiện tùy ngữ cảnh) -->
+      <div id="confirmPreviewBox" class="hidden mt-4 p-3.5 rounded-xl bg-slate-900/90 border border-slate-700/80 text-xs text-slate-300 space-y-1.5">
+      </div>
+
+      <div class="flex justify-end gap-3 mt-6 pt-4 border-t border-slate-700/80">
+        <button id="confirmCancelBtn" type="button"
+                class="px-4 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm font-medium transition">
+          Hủy bỏ
+        </button>
+        <button id="confirmOkBtn" type="button"
+                class="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition shadow-lg">
+          Xác nhận
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOAST THÔNG BÁO GÓC DƯỚI PHẢI -->
+  <div id="toastContainer" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2.5 max-w-sm w-full pointer-events-none px-4 md:px-0"></div>
+
+  <footer class="text-center py-6 text-slate-500 text-xs border-t border-slate-800/80 mt-12">
+    AI Hub Manager • Nhấn giữ thẻ để kéo thả vị trí • Đồng bộ đám mây Firebase
+  </footer>
+
+  <!-- SCRIPT FIREBASE & LOGIC CHÍNH -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.9.0/firebase-app.js";
+    import { 
+      getFirestore, collection, onSnapshot, addDoc, doc, updateDoc, deleteDoc, query, orderBy, writeBatch 
+    } from "https://www.gstatic.com/firebasejs/10.9.0/firebase-firestore.js";
+
+    // Cấu hình Firebase
+    const firebaseConfig = {
+      apiKey: "AIzaSyCUUIqX2h-q6_sSJXODKT63EckcfMfqK5I",
+      authDomain: "my-ai-hub-df06a.firebaseapp.com",
+      projectId: "my-ai-hub-df06a",
+      storageBucket: "my-ai-hub-df06a.firebasestorage.app",
+      messagingSenderId: "753395830675",
+      appId: "1:753395830675:web:164c5b4cfb8d33392de266",
+      measurementId: "G-FTKFXR949K"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const toolsCol = collection(db, "ai_tools");
+
+    const API_KEY_STORAGE = 'ai_hub_gemini_key';
+    let aiTools = [];
+    let sortableInstance = null;
+
+    // HIỂN THỊ TOAST THÔNG BÁO HIỆN ĐẠI
+    window.showToast = function(message, type = 'success') {
+      const container = document.getElementById('toastContainer');
+      const toast = document.createElement('div');
+      
+      const styles = {
+        success: 'bg-slate-800/95 border-emerald-500/60 text-emerald-300',
+        info: 'bg-slate-800/95 border-blue-500/60 text-blue-300',
+        error: 'bg-slate-800/95 border-red-500/60 text-red-300'
+      };
+      const icons = {
+        success: '✅',
+        info: '✨',
+        error: '⚠️'
+      };
+
+      toast.className = `pointer-events-auto flex items-center gap-3 px-4 py-3.5 rounded-2xl border shadow-2xl backdrop-blur-md toast-enter ${styles[type] || styles.info}`;
+      toast.innerHTML = `
+        <span class="text-lg shrink-0">${icons[type] || '✨'}</span>
+        <span class="text-xs font-medium text-slate-100 leading-snug flex-1">${message}</span>
+      `;
+      container.appendChild(toast);
+
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateY(10px)';
+        toast.style.transition = 'all 0.25s ease';
+        setTimeout(() => toast.remove(), 250);
+      }, 3200);
+    };
+
+    // HIỂN THỊ MODAL XÁC NHẬN CUSTOM CSS
+    window.showCustomConfirm = function({ icon, title, message, previewHTML = '', confirmText = 'Xác nhận', theme = 'blue' }) {
+      return new Promise((resolve) => {
+        const modal = document.getElementById('confirmDialogModal');
+        const iconBox = document.getElementById('confirmIconBox');
+        const titleEl = document.getElementById('confirmTitle');
+        const msgEl = document.getElementById('confirmMessage');
+        const previewBox = document.getElementById('confirmPreviewBox');
+        const okBtn = document.getElementById('confirmOkBtn');
+        const cancelBtn = document.getElementById('confirmCancelBtn');
+
+        const themes = {
+          blue: {
+            icon: 'bg-indigo-500/15 text-indigo-400 border-indigo-500/30',
+            btn: 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-600/25'
+          },
+          emerald: {
+            icon: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
+            btn: 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-600/25'
+          },
+          red: {
+            icon: 'bg-red-500/15 text-red-400 border-red-500/30',
+            btn: 'bg-red-600 hover:bg-red-500 shadow-red-600/25'
+          }
+        };
+
+        const currentTheme = themes[theme] || themes.blue;
+        iconBox.className = `w-12 h-12 rounded-2xl flex items-center justify-center text-2xl shrink-0 border ${currentTheme.icon}`;
+        iconBox.textContent = icon;
+        titleEl.textContent = title;
+        msgEl.textContent = message;
+
+        if (previewHTML) {
+          previewBox.innerHTML = previewHTML;
+          previewBox.classList.remove('hidden');
+        } else {
+          previewBox.classList.add('hidden');
+        }
+
+        okBtn.className = `px-5 py-2 rounded-xl text-white text-sm font-semibold transition shadow-lg ${currentTheme.btn}`;
+        okBtn.textContent = confirmText;
+
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+
+        const cleanup = (result) => {
+          modal.classList.add('hidden');
+          modal.classList.remove('flex');
+          okBtn.onclick = null;
+          cancelBtn.onclick = null;
+          resolve(result);
+        };
+
+        okBtn.onclick = () => cleanup(true);
+        cancelBtn.onclick = () => cleanup(false);
+      });
+    };
+
+    // Lắng nghe dữ liệu Realtime từ Firestore
+    const q = query(toolsCol, orderBy("order", "asc"));
+    onSnapshot(q, (snapshot) => {
+      aiTools = snapshot.docs.map(d => ({
+        id: d.id,
+        ...d.data()
+      }));
+      window.filterTools();
+    }, (error) => {
+      console.error("Lỗi Firestore:", error);
+      const statusEl = document.getElementById('cloudStatus');
+      statusEl.textContent = "⚠️ Lỗi kết nối Firebase";
+      statusEl.className = "text-red-400";
+    });
+
+    // Render danh sách công cụ
+    window.renderTools = function(list) {
+      const grid = document.getElementById('aiGrid');
+      const countEl = document.getElementById('toolCount');
+      grid.innerHTML = '';
+      countEl.textContent = `Hiển thị ${list.length} /${aiTools.length} công cụ AI (Nhấn giữ bất kỳ thẻ nào để kéo thả sắp xếp)`;
+
+      if (list.length === 0) {
+        grid.innerHTML = `
+          <div class="col-span-full text-center py-12 bg-slate-800/40 rounded-2xl border border-slate-800">
+            <p class="text-slate-400 mb-3">Chưa có công cụ AI nào phù hợp.</p>
+            <button onclick="openModal()" class="text-blue-400 hover:underline text-sm font-medium">+ Thêm công cụ AI đầu tiên</button>
+          </div>`;
+        return;
+      }
+
+      list.forEach(tool => {
+        let domain = '';
+        try { domain = new URL(tool.url).hostname; } catch (e) {}
+        const faviconUrl = domain ? `https://www.google.com/s2/favicons?domain=${domain}&sz=64` : '';
+
+        const card = document.createElement('div');
+        card.setAttribute('data-id', tool.id);
+        card.className = "bg-slate-800/70 border border-slate-700/80 rounded-2xl p-5 hover:border-blue-500/60 hover:bg-slate-800 transition duration-200 flex flex-col justify-between group cursor-grab active:cursor-grabbing select-none";
+        
+        card.innerHTML = `
+          <div>
+            <!-- Header: Bấm vào Logo hoặc Tên AI vẫn mở trực tiếp trang web -->
+            <div class="flex justify-between items-start gap-2 mb-3">
+              <a href="${escapeHTML(tool.url)}" target="_blank" rel="noopener noreferrer" 
+                 class="flex items-center gap-3 group/link hover:opacity-85 transition flex-1 min-w-0" 
+                 title="Nhấn để mở ${escapeHTML(tool.name)}">
+                ${faviconUrl ? `<img src="${faviconUrl}" alt="icon" class="w-8 h-8 rounded-lg bg-slate-700 p-0.5 object-contain flex-shrink-0 pointer-events-none">` : ''}
+                <h3 class="text-lg font-bold text-white group-hover/link:text-blue-400 transition truncate">
+                  ${escapeHTML(tool.name)}
+                </h3>
+              </a>
+
+              <span class="text-xs font-medium bg-blue-500/15 text-blue-300 px-2.5 py-1 rounded-full border border-blue-500/30 whitespace-nowrap">
+                ${escapeHTML(tool.category)}
+              </span>
+            </div>
+
+            <!-- Mô tả công dụng -->
+            <p class="text-slate-300 text-sm leading-relaxed mb-5">${escapeHTML(tool.description)}</p>
+          </div>
+
+          <!-- Footer: Nút Sửa/Xóa bên trái + Nút Mở trang web ↗ bên phải -->
+          <div class="pt-3.5 border-t border-slate-700/60 flex justify-between items-center">
+            <div class="flex items-center gap-2">
+              <button onclick="editTool('${tool.id}')" class="text-xs text-slate-400 hover:text-amber-400 px-2 py-1 rounded hover:bg-slate-700/50 transition">✎ Sửa</button>
+              <button onclick="deleteTool('${tool.id}')" class="text-xs text-slate-400 hover:text-red-400 px-2 py-1 rounded hover:bg-slate-700/50 transition">🗑 Xóa</button>
+            </div>
+
+            <a href="${escapeHTML(tool.url)}" target="_blank" rel="noopener noreferrer" 
+               class="inline-flex items-center gap-1 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-3.5 py-2 rounded-lg transition shadow-sm">
+              Mở trang web ↗
+            </a>
+          </div>
+        `;
+        grid.appendChild(card);
+      });
+
+      // Kích hoạt tính năng kéo thả tự do trên toàn bộ thẻ
+      if (sortableInstance) sortableInstance.destroy();
+      sortableInstance = new Sortable(grid, {
+        animation: 220,
+        ghostClass: 'sortable-ghost',
+        dragClass: 'sortable-drag',
+        filter: 'a, button', // Nhấn vào link hoặc nút vẫn hoạt động bình thường
+        preventOnFilter: false,
+        onEnd: async function (evt) {
+          if (evt.oldIndex === evt.newIndex) return;
+          const currentCards = Array.from(grid.querySelectorAll('[data-id]'));
+          const batch = writeBatch(db);
+          currentCards.forEach((cardEl, index) => {
+            const docId = cardEl.getAttribute('data-id');
+            batch.update(doc(db, "ai_tools", docId), { order: index });
+          });
+          try {
+            await batch.commit();
+            window.showToast('Đã lưu vị trí sắp xếp mới!', 'info');
+          } catch (err) {
+            console.error("Lỗi cập nhật vị trí:", err);
+          }
+        }
+      });
+    };
+
+    // Tìm kiếm nhanh
+    window.filterTools = function() {
+      const q = document.getElementById('searchInput').value.toLowerCase().trim();
+      const filtered = aiTools.filter(item => {
+        return (item.name || '').toLowerCase().includes(q) || 
+               (item.description || '').toLowerCase().includes(q) ||
+               (item.category || '').toLowerCase().includes(q);
+      });
+      window.renderTools(filtered);
+    };
+
+    // NHẬP FILE JSON TRỰC TIẾP LÊN FIRESTORE VỚI MODAL XÁC NHẬN CSS
+    window.importJSONToFirestore = function(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = async function(e) {
+        try {
+          const list = JSON.parse(e.target.result);
+          if (!Array.isArray(list)) {
+            window.showToast('File JSON phải chứa mảng danh sách các công cụ AI!', 'error');
+            return;
+          }
+
+          const sampleNames = list.slice(0, 4).map(i => i.name).filter(Boolean).join(', ');
+          const confirmed = await window.showCustomConfirm({
+            icon: '📂',
+            title: 'Xác nhận nhập JSON lên Cloud',
+            message: `Bạn chuẩn bị đồng bộ dữ liệu từ file "${file.name}" trực tiếp lên Firebase Firestore.`,
+            previewHTML: `
+              <div class="flex justify-between"><span>Số lượng công cụ:</span> <b class="text-indigo-400">${list.length} công cụ AI</b></div>
+              <div class="truncate"><span>Bao gồm:</span> <span class="text-slate-200">${escapeHTML(sampleNames)}${list.length > 4 ? '...' : ''}</span></div>
+            `,
+            confirmText: `Nhập ${list.length} công cụ ngay`,
+            theme: 'blue'
+          });
+
+          if (!confirmed) return;
+
+          const batch = writeBatch(db);
+          const baseOrder = aiTools.length;
+          list.forEach((item, index) => {
+            const newDocRef = doc(toolsCol);
+            batch.set(newDocRef, {
+              name: item.name || '',
+              category: item.category || 'Other',
+              url: item.url || '',
+              description: item.description || '',
+              added_date: item.added_date || new Date().toISOString(),
+              order: baseOrder + index
+            });
+          });
+
+          await batch.commit();
+          window.showToast(`Đã nhập thành công ${list.length} công cụ lên Cloud!`, 'success');
+        } catch (err) {
+          window.showToast('Lỗi đọc file JSON: ' + err.message, 'error');
+        }
+      };
+      reader.readAsText(file);
+      event.target.value = '';
+    };
+
+    // XUẤT FILE JSON VỚI MODAL XÁC NHẬN CSS
+    window.exportJSONFromFirestore = async function() {
+      if (aiTools.length === 0) {
+        window.showToast('Chưa có công cụ nào trên Cloud để xuất file!', 'error');
+        return;
+      }
+
+      const fileName = `ai_hub_backup_${new Date().toISOString().split('T')[0]}.json`;
+      const confirmed = await window.showCustomConfirm({
+        icon: '⬇',
+        title: 'Xuất dữ liệu JSON từ Cloud',
+        message: 'Hệ thống sẽ đóng gói toàn bộ danh sách công cụ AI hiện có theo đúng thứ tự sắp xếp của bạn để tải về máy.',
+        previewHTML: `
+          <div class="flex justify-between"><span>Tên file tải về:</span> <b class="text-emerald-400">${fileName}</b></div>
+          <div class="flex justify-between"><span>Tổng số công cụ:</span> <b class="text-white">${aiTools.length} công cụ</b></div>
+        `,
+        confirmText: 'Tải file JSON về máy',
+        theme: 'emerald'
+      });
+
+      if (!confirmed) return;
+
+      const cleanData = aiTools.map(({ id, ...rest }) => rest);
+      const dataStr = JSON.stringify(cleanData, null, 2);
+      const blob = new Blob([dataStr], { type: 'application/json;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      window.showToast(`Đã xuất ${aiTools.length} công cụ ra file JSON!`, 'success');
+    };
+
+    // Thêm / Sửa công cụ
+    window.saveAITool = async function(e) {
+      e.preventDefault();
+      const btn = document.getElementById('saveSubmitBtn');
+      btn.disabled = true;
+      btn.textContent = "Đang lưu lên Cloud...";
+
+      const id = document.getElementById('toolId').value;
+      const name = document.getElementById('toolName').value.trim();
+      const category = document.getElementById('toolCategory').value;
+      const url = document.getElementById('toolUrl').value.trim();
+      const description = document.getElementById('toolDesc').value.trim();
+
+      try {
+        if (id) {
+          const docRef = doc(db, "ai_tools", id);
+          await updateDoc(docRef, { name, category, url, description });
+          window.showToast(`Đã cập nhật "${name}"!`, 'success');
+        } else {
+          const nextOrder = aiTools.length > 0 ? Math.min(...aiTools.map(t => t.order ?? 0)) - 1 : 0;
+          await addDoc(toolsCol, {
+            name,
+            category,
+            url,
+            description,
+            added_date: new Date().toISOString(),
+            order: nextOrder
+          });
+          window.showToast(`Đã thêm "${name}" lên đám mây!`, 'success');
+        }
+        window.closeModal();
+      } catch (err) {
+        window.showToast("Lỗi lưu dữ liệu: " + err.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Lưu trực tiếp lên Cloud";
+      }
+    };
+
+    // Xóa công cụ với Modal xác nhận
+    window.deleteTool = async function(id) {
+      const item = aiTools.find(t => t.id === id);
+      if (!item) return;
+
+      const confirmed = await window.showCustomConfirm({
+        icon: '🗑️',
+        title: 'Xóa công cụ AI',
+        message: `Bạn có chắc chắn muốn xóa vĩnh viễn "${item.name}" khỏi đám mây Firebase không?`,
+        confirmText: 'Xóa vĩnh viễn',
+        theme: 'red'
+      });
+
+      if (confirmed) {
+        try {
+          await deleteDoc(doc(db, "ai_tools", id));
+          window.showToast(`Đã xóa "${item.name}" khỏi Cloud.`, 'info');
+        } catch (err) {
+          window.showToast("Lỗi khi xóa: " + err.message, 'error');
+        }
+      }
+    };
+
+    window.editTool = function(id) {
+      const item = aiTools.find(t => t.id === id);
+      if (item) window.openModal(item);
+    };
+
+    // Modal
+    window.openModal = function(editItem = null) {
+      const modal = document.getElementById('aiModal');
+      const title = document.getElementById('modalTitle');
+      document.getElementById('aiForm').reset();
+      document.getElementById('aiGeneratingText').classList.add('hidden');
+
+      if (editItem) {
+        title.textContent = 'Chỉnh sửa công cụ AI';
+        document.getElementById('toolId').value = editItem.id;
+        document.getElementById('toolName').value = editItem.name;
+        document.getElementById('toolCategory').value = editItem.category;
+        document.getElementById('toolUrl').value = editItem.url;
+        document.getElementById('toolDesc').value = editItem.description;
+      } else {
+        title.textContent = 'Thêm công cụ AI mới';
+        document.getElementById('toolId').value = '';
+      }
+
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+    };
+
+    window.closeModal = function() {
+      const modal = document.getElementById('aiModal');
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+    };
+
+    // API Key
+    window.openApiKeyModal = function() {
+      document.getElementById('geminiApiKeyInput').value = localStorage.getItem(API_KEY_STORAGE) || '';
+      document.getElementById('apiKeyModal').classList.remove('hidden');
+      document.getElementById('apiKeyModal').classList.add('flex');
+    };
+
+    window.closeApiKeyModal = function() {
+      document.getElementById('apiKeyModal').classList.add('hidden');
+      document.getElementById('apiKeyModal').classList.remove('flex');
+    };
+
+    window.saveApiKey = function() {
+      const key = document.getElementById('geminiApiKeyInput').value.trim();
+      if (!key) {
+        localStorage.removeItem(API_KEY_STORAGE);
+        window.showToast('Đã xóa Gemini API Key.', 'info');
+      } else {
+        localStorage.setItem(API_KEY_STORAGE, key);
+        window.showToast('Đã lưu Gemini API Key thành công!', 'success');
+      }
+      window.closeApiKeyModal();
+    };
+
+    // Gọi Gemini 3.8 Flash tự sinh mô tả (kèm retry)
+    window.autoGenerateInfo = async function() {
+      const apiKey = localStorage.getItem(API_KEY_STORAGE);
+      if (!apiKey) {
+        window.showToast('Vui lòng cài đặt Gemini API Key trước!', 'error');
+        window.openApiKeyModal();
+        return;
+      }
+
+      const name = document.getElementById('toolName').value.trim();
+      const url = document.getElementById('toolUrl').value.trim();
+
+      if (!name) {
+        window.showToast('Vui lòng nhập tên công cụ AI trước!', 'error');
+        document.getElementById('toolName').focus();
+        return;
+      }
+
+      const btn = document.getElementById('autoGenerateBtn');
+      const loadingText = document.getElementById('aiGeneratingText');
+      btn.disabled = true;
+      btn.classList.add('opacity-50', 'cursor-not-allowed');
+      loadingText.textContent = 'Gemini 3.8 Flash đang viết mô tả...';
+      loadingText.classList.remove('hidden');
+
+      const prompt = `Bạn là chuyên gia về AI. Hãy viết mô tả ngắn gọn và phân loại cho công cụ AI sau:
+Tên công cụ: "${name}"
+Đường dẫn: "${url}"
+
+Yêu cầu trả về DUY NHẤT một chuỗi JSON chuẩn (không dùng Markdown, không bọc trong \`\`\`json):
+{
+  "category": "Chọn 1 trong các danh mục sau: LLM / Chat, Coding, Image / Design, Audio / Video, Research / Search, Productivity, Other",
+  "description": "Mô tả công dụng chính bằng tiếng Việt ngắn gọn, chuyên nghiệp (khoảng 1 đến 2 câu)."
+}`;
+
+      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${encodeURIComponent(apiKey.trim())}`;
+      
+      const maxRetries = 3;
+      let attempt = 0;
+      let success = false;
+
+      while (attempt < maxRetries && !success) {
+        try {
+          attempt++;
+          if (attempt > 1) {
+            loadingText.textContent = `Máy chủ bận, đang thử lại lần ${attempt}/3...`;
+            await new Promise(r => setTimeout(r, 2000 * attempt));
+          }
+
+          const response = await fetch(apiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+          });
+
+          const data = await response.json();
+
+          if (!response.ok) {
+            const errorMsg = data.error?.message || `HTTP ${response.status}`;
+            if (response.status === 503 || errorMsg.includes('high demand') || response.status === 429) {
+              if (attempt < maxRetries) continue;
+            }
+            throw new Error(errorMsg);
+          }
+
+          let rawText = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+          rawText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
+
+          const result = JSON.parse(rawText);
+
+          if (result.category) document.getElementById('toolCategory').value = result.category;
+          if (result.description) document.getElementById('toolDesc').value = result.description;
+
+          window.showToast('Đã tạo mô tả tự động bằng Gemini 3.8!', 'info');
+          success = true;
+        } catch (err) {
+          if (attempt >= maxRetries) {
+            console.error("Lỗi:", err);
+            window.showToast('Lỗi gọi Gemini 3.8: ' + err.message, 'error');
+          }
+        }
+      }
+
+      btn.disabled = false;
+      btn.classList.remove('opacity-50', 'cursor-not-allowed');
+      loadingText.textContent = 'Gemini 3.8 Flash đang viết mô tả...';
+      loadingText.classList.add('hidden');
+    };
+
+    function escapeHTML(str) {
+      if (!str) return '';
+      return str.replace(/[&<>"']/g, m => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[m]));
+    }
+
+    document.getElementById('searchInput').addEventListener('input', window.filterTools);
+  </script>
+</body>
+</html>
